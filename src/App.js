@@ -1,8 +1,8 @@
 // src/App.js
 import React, { useState, useEffect } from 'react';
-// FIX: Changed './components/VideoPlayer' to './component/VideoPlayer'
 import VideoPlayer from './component/VideoPlayer';
-import { initializeFirebase, getAuthInstance } from './utils/firebase';
+// Corrected import: 'getDb' is for Firestore, 'getAuthInstance' for Auth
+import { initializeFirebase, getAuthInstance, getDb } from './utils/firebase';
 import './App.css'; // Assuming you have some global styling
 
 function App() {
@@ -15,7 +15,20 @@ function App() {
   useEffect(() => {
     const init = async () => {
       try {
-        const { auth } = await initializeFirebase();
+        const { auth, db: firestoreDb } = await initializeFirebase(); // Destructure db as firestoreDb
+        // Verify Firestore and Auth instances are available
+        if (!firestoreDb) {
+            console.error("Firestore DB instance not returned from initializeFirebase.");
+            throw new Error("Firestore DB not available.");
+        }
+        if (!auth) {
+            console.error("Auth instance not returned from initializeFirebase.");
+            throw new Error("Auth not available.");
+        }
+
+        // Now you can use firestoreDb and auth
+        console.log("Firebase initialized successfully in App.js useEffect.");
+
         // Listen for auth state changes
         const unsubscribe = getAuthInstance().onAuthStateChanged(user => {
           if (user) {
@@ -30,8 +43,8 @@ function App() {
         });
         return () => unsubscribe(); // Clean up the listener
       } catch (err) {
-        console.error("Failed to initialize Firebase:", err);
-        setError("Failed to connect to backend services. Please try again later.");
+        console.error("Failed to initialize Firebase in App.js:", err);
+        setError("Failed to connect to backend services. Please try again later. Error: " + err.message);
         setLoading(false);
       }
     };
@@ -40,7 +53,7 @@ function App() {
 
   // Video URL and ID for demonstration
   // Replace with your actual video URL and a unique ID
-  const demoVideoUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'; // Rick Astley - Never Gonna Give Up
+  const demoVideoUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'; // Rick Astley - Never Gonna Give You Up
   const demoVideoId = 'youtube-dQw4w9WgXcQ'; // Unique identifier for this video
 
   if (loading) {
