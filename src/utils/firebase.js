@@ -1,131 +1,216 @@
 // src/utils/firebase.js
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { getAuth, signInWithCustomToken, signInAnonymously } from 'firebase/auth';
+import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, limit, serverTimestamp, where } from 'firebase/firestore';
+import { getDocs, setDoc, doc } from 'firebase/firestore'; // Ensure all Firestore functions are imported
 
-let firebaseApp = null;
-let db = null;
-let auth = null;
+let app;
+let db;
+let auth;
+let userId; // Declare userId here to be accessible throughout the module
 
-/**
- * Initializes Firebase application, authentication, and Firestore.
- * Handles Canvas-specific global variables for seamless integration.
- * @returns {Promise<{app: any, auth: any, db: any}>} Firebase app, auth, and firestore instances.
- */
+// Get global variables provided by the Canvas environment.
+// For Vercel deployment, these might not be present, so we use a fallback.
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id'; // Fallback for Vercel
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {}; // Fallback for Vercel
+const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; // Fallback for Vercel
+
 export const initializeFirebase = async () => {
-  if (firebaseApp) {
-    return { app: firebaseApp, auth, db }; // Return existing instances if already initialized
-  }
+    try {
+        if (!app) {
+            // If firebaseConfig is empty or default, it means we are likely outside the Canvas environment
+            // and relying on environment variables or hardcoded config.
+            if (Object.keys(firebaseConfig).length === 0) {
+                console.warn("Firebase config is empty. This might be expected if running outside Canvas environment or if configuration is loaded differently.");
+                // IMPORTANT: For deployment on Vercel, if you intend to use YOUR OWN Firebase project
+                // and not the Canvas provided one, you MUST set these as Environment Variables in Vercel
+                // or uncomment/replace with your actual Firebase project config.
+                // Example:
+                app = initializeApp({
+                    apiKey: process.env.REACT_APP_FIREBASE_API_KEY || "YOUR_API_KEY", // Replace with your actual API Key
+                    authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN || "YOUR_AUTH_DOMAIN",
+                    projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID || "YOUR_PROJECT_ID",
+                    storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET || "YOUR_STORAGE_BUCKET",
+                    messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID || "YOUR_MESSAGING_SENDER_ID",
+                    appId: process.env.REACT_APP_FIREBASE_APP_ID || "YOUR_APP_ID"
+                });
+                console.log("Using fallback Firebase config (for Vercel or local).");
+            } else {
+                app = initializeApp(firebaseConfig);
+                console.log("Using Canvas-provided Firebase config.");
+            }
+            db = getFirestore(app);
+            auth = getAuth(app);
 
-  try {
-    // Access global variables safely
-    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : undefined;
+            // Sign in anonymously or with custom token if available
+            if (initialAuthToken) {
+                await signInWithCustomToken(auth, initialAuthToken);
+                console.log("Signed in with custom token.");
+            } else {
+                await signInAnonymously(auth);
+                console.log("Signed in anonymously.");
+            }
 
+            // Set up an auth state listener to get the current user ID
+            auth.onAuthStateChanged(user => {
+                if (user) {
+                    userId = user.uid;
+                    console.log("Auth state changed: User ID set to", userId);
+                } else {
+                    userId = null;
+                    console.log("Auth state changed: No user.");
+                }
+            });
 
-    if (Object.keys(firebaseConfig).length === 0 && appId === 'default-app-id') {
-      console.warn("Firebase configuration or __app_id not found. If running locally, please provide your firebaseConfig.");
-      // Fallback for local development or if globals are missing in test environments
-      // You might need to provide a hardcoded config here for local testing if not using Canvas
-      // For submission, rely on the Canvas globals.
-      // Example local config (replace with your own if needed for local testing):
-      // firebaseConfig = {
-      //   apiKey: "YOUR_API_KEY",
-      //   authDomain: "YOUR_AUTH_DOMAIN",
-      //   projectId: "YOUR_PROJECT_ID",
-      //   storageBucket: "YOUR_STORAGE_BUCKET",
-      //   messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-      //   appId: "YOUR_APP_ID"
-      // };
+            console.log("Firebase initialized successfully.");
+        }
+        return { app, db, auth };
+    } catch (error) {
+        console.error("Error initializing Firebase:", error);
+        throw error; // Re-throw to be caught by App.js
     }
-
-    firebaseApp = initializeApp(firebaseConfig, appId); // Use appId as name to avoid multiple app initialization issues
-    auth = getAuth(firebaseApp);
-    db = getFirestore(firebaseApp);
-
-    // Sign in using the custom token if provided (Canvas environment)
-    // Otherwise, sign in anonymously as a fallback.
-    if (initialAuthToken) {
-      await signInWithCustomToken(auth, initialAuthToken);
-      console.log('Signed in with custom token.');
-    } else {
-      await signInAnonymously(auth);
-      console.log('Signed in anonymously (no custom token found).');
-    }
-
-    return { app: firebaseApp, auth, db };
-  } catch (error) {
-    console.error("Firebase initialization error:", error);
-    throw error; // Re-throw to be caught by the calling component
-  }
 };
 
-/**
- * Returns the Firestore instance.
- * @returns {Firestore | null} The Firestore instance or null if not initialized.
- */
-export const getFirestoreInstance = () => db;
-
-/**
- * Returns the Auth instance.
- * @returns {Auth | null} The Auth instance or null if not initialized.
- */
-export const getAuthInstance = () => auth;
-
-/**
- * Saves video progress data to Firestore.
- * @param {string} userId The ID of the current user.
- * @param {string} videoId The unique ID of the video.
- * @param {object} progressData The data to save (lastWatchedPosition, watchedIntervals, uniqueProgressPercentage).
- */
-export const saveVideoProgress = async (userId, videoId, progressData) => {
-  if (!db) {
-    console.error("Firestore not initialized.");
-    return;
-  }
-
-  // Ensure __app_id is used for the collection path as per instructions
-  const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-  // Use private data path: /artifacts/{appId}/users/{userId}/{your_collection_name}
-  const userProgressDocRef = doc(db, `artifacts/${appId}/users/${userId}/videoProgress`, videoId);
-
-  try {
-    await setDoc(userProgressDocRef, progressData, { merge: true });
-  } catch (error) {
-    console.error("Error writing document:", error);
-    throw error;
-  }
+export const getDb = () => {
+    if (!db) {
+        console.error("Firestore not initialized. Call initializeFirebase first.");
+        throw new Error("Firestore not initialized.");
+    }
+    return db;
 };
 
-/**
- * Listens for real-time updates to video progress data from Firestore.
- * @param {string} userId The ID of the current user.
- * @param {string} videoId The unique ID of the video.
- * @param {function} callback A callback function to receive data updates.
- * @returns {function} An unsubscribe function to stop listening.
- */
-export const getVideoProgress = (userId, videoId, callback) => {
-  if (!db) {
-    console.error("Firestore not initialized for listener.");
-    return () => {}; // Return a no-op unsubscribe
-  }
-
-  const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-  const userProgressDocRef = doc(db, `artifacts/${appId}/users/${userId}/videoProgress`, videoId);
-
-  // onSnapshot provides real-time updates
-  const unsubscribe = onSnapshot(userProgressDocRef, (docSnap) => {
-    if (docSnap.exists()) {
-      callback(docSnap.data());
-    } else {
-      callback(null); // No data for this video/user yet
-      console.log("No progress data found for this video/user.");
+export const getAuthInstance = () => {
+    if (!auth) {
+        console.error("Auth not initialized. Call initializeFirebase first.");
+        throw new Error("Auth not initialized.");
     }
-  }, (error) => {
-    console.error("Error listening to document:", error);
-    // Handle error, e.g., display a message to the user
-  });
+    return auth;
+};
 
-  return unsubscribe;
+// Function to get the current user ID
+export const getCurrentUserId = () => {
+    // Return the cached userId. It's updated by the onAuthStateChanged listener.
+    return userId;
+};
+
+// --- Firestore Operations ---
+
+// Save video progress for a specific user and video
+export const saveVideoProgress = async (videoId, currentTime, duration, watchedSegments, currentUserId) => {
+    if (!db) {
+        await initializeFirebase(); // Ensure Firebase is initialized
+    }
+    // Using the appId from the environment/fallback
+    const currentAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    const userVidProgressCollectionRef = collection(db, `artifacts/${currentAppId}/users/${currentUserId}/videoProgress`);
+    const docRef = query(userVidProgressCollectionRef, where("videoId", "==", videoId));
+
+    try {
+        const querySnapshot = await getDocs(docRef);
+        if (!querySnapshot.empty) {
+            // Document exists, update it
+            const docId = querySnapshot.docs[0].id;
+            await setDoc(doc(userVidProgressCollectionRef, docId), {
+                videoId,
+                currentTime,
+                duration,
+                watchedSegments: JSON.stringify(watchedSegments), // Store array as JSON string
+                timestamp: serverTimestamp()
+            }, { merge: true });
+            console.log("Video progress updated for videoId:", videoId, "userId:", currentUserId);
+        } else {
+            // Document does not exist, create a new one
+            await addDoc(userVidProgressCollectionRef, {
+                videoId,
+                currentTime,
+                duration,
+                watchedSegments: JSON.stringify(watchedSegments), // Store array as JSON string
+                timestamp: serverTimestamp()
+            });
+            console.log("New video progress saved for videoId:", videoId, "userId:", currentUserId);
+        }
+    } catch (e) {
+        console.error("Error saving video progress: ", e);
+        throw e;
+    }
+};
+
+
+// Load video progress for a specific user and video
+export const loadVideoProgress = (videoId, currentUserId, callback) => {
+    if (!db) {
+      initializeFirebase().then(() => {
+            _loadVideoProgress(videoId, currentUserId, callback);
+        }).catch(err => {
+            console.error("Failed to initialize Firebase for loading progress:", err);
+            callback(null);
+        });
+        return;
+    }
+    _loadVideoProgress(videoId, currentUserId, callback);
+};
+
+const _loadVideoProgress = (videoId, currentUserId, callback) => {
+    const currentAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    const userVidProgressCollectionRef = collection(db, `artifacts/${currentAppId}/users/${currentUserId}/videoProgress`);
+    const q = query(userVidProgressCollectionRef, where("videoId", "==", videoId));
+
+    // Listen for real-time updates
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+        if (!snapshot.empty) {
+            const data = snapshot.docs[0].data();
+            const loadedProgress = {
+                currentTime: data.currentTime,
+                duration: data.duration,
+                // Parse the JSON string back to an array
+                watchedSegments: data.watchedSegments ? JSON.parse(data.watchedSegments) : [],
+            };
+            console.log("Video progress loaded:", loadedProgress);
+            callback(loadedProgress);
+        } else {
+            console.log("No video progress found for videoId:", videoId, "userId:", currentUserId);
+            callback(null);
+        }
+    }, (error) => {
+        console.error("Error loading video progress:", error);
+        callback(null);
+    });
+
+    return unsubscribe; // Return unsubscribe function for cleanup
+};
+
+// Get all video progress entries for a user (not directly used by VideoPlayer but useful)
+export const getAllVideoProgress = (currentUserId, callback) => {
+    if (!db) {
+        initializeFirebase().then(() => {
+            _getAllVideoProgress(currentUserId, callback);
+        }).catch(err => {
+            console.error("Failed to initialize Firebase for getting all progress:", err);
+            callback([]);
+        });
+        return;
+    }
+    _getAllVideoProgress(currentUserId, callback);
+};
+
+const _getAllVideoProgress = (currentUserId, callback) => {
+    const currentAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    const userVidProgressCollectionRef = collection(db, `artifacts/${currentAppId}/users/${currentUserId}/videoProgress`);
+    const q = query(userVidProgressCollectionRef, orderBy("timestamp", "desc"));
+
+    // Listen for real-time updates
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+        const allProgress = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            watchedSegments: doc.data().watchedSegments ? JSON.parse(doc.data().watchedSegments) : []
+        }));
+        console.log("All video progress for user:", allProgress);
+        callback(allProgress);
+    }, (error) => {
+        console.error("Error getting all video progress:", error);
+        callback([]);
+    });
+
+    return unsubscribe;
 };
