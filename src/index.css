@@ -1,0 +1,9 @@
+/* src/index.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom font for consistent look */
+body {
+  font-family: 'Inter', sans-serif;
+}
