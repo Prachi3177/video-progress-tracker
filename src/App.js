@@ -1,7 +1,8 @@
-// src/App.js
 import React, { useState, useEffect } from 'react';
 import VideoPlayer from './component/VideoPlayer';
-// Corrected import: 'getDb' is for Firestore, 'getAuthInstance' for Auth
+// IMPORTANT: Ensure getDb and getAuthInstance are correctly imported.
+// 'getFirestoreInstance' is NOT exported by your firebase.js.
+// We import getDb for the Firestore instance.
 import { initializeFirebase, getAuthInstance, getDb } from './utils/firebase';
 import './App.css'; // Assuming you have some global styling
 
@@ -15,21 +16,18 @@ function App() {
   useEffect(() => {
     const init = async () => {
       try {
-        const { auth, db: firestoreDb } = await initializeFirebase(); // Destructure db as firestoreDb
-        // Verify Firestore and Auth instances are available
-        if (!firestoreDb) {
-            console.error("Firestore DB instance not returned from initializeFirebase.");
-            throw new Error("Firestore DB not available.");
-        }
-        if (!auth) {
-            console.error("Auth instance not returned from initializeFirebase.");
-            throw new Error("Auth not available.");
+        // Initialize Firebase and get the instances.
+        // It's good practice to get them here if needed,
+        // although getDb() and getAuthInstance() can be called later as well.
+        const { auth: firebaseAuth, db: firestoreDb } = await initializeFirebase();
+
+        // Basic check to ensure instances are available
+        if (!firebaseAuth || !firestoreDb) {
+            console.error("Firebase auth or database instance not available after initialization.");
+            throw new Error("Firebase services failed to initialize.");
         }
 
-        // Now you can use firestoreDb and auth
-        console.log("Firebase initialized successfully in App.js useEffect.");
-
-        // Listen for auth state changes
+        // Listen for auth state changes using the exported getAuthInstance()
         const unsubscribe = getAuthInstance().onAuthStateChanged(user => {
           if (user) {
             setUserId(user.uid);
@@ -44,12 +42,12 @@ function App() {
         return () => unsubscribe(); // Clean up the listener
       } catch (err) {
         console.error("Failed to initialize Firebase in App.js:", err);
-        setError("Failed to connect to backend services. Please try again later. Error: " + err.message);
+        setError("Failed to connect to backend services. Please try again later. Details: " + err.message);
         setLoading(false);
       }
     };
     init();
-  }, []);
+  }, []); // Empty dependency array means this runs once on component mount
 
   // Video URL and ID for demonstration
   // Replace with your actual video URL and a unique ID
