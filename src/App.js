@@ -1,77 +1,85 @@
 // src/App.js
 import React, { useState, useEffect } from 'react';
-import VideoPlayer from './components/VideoPlayer';
+// FIX: Changed './components/VideoPlayer' to './component/VideoPlayer'
+import VideoPlayer from './component/VideoPlayer';
 import { initializeFirebase, getAuthInstance } from './utils/firebase';
+import './App.css'; // Assuming you have some global styling
 
 function App() {
   const [firebaseInitialized, setFirebaseInitialized] = useState(false);
   const [userId, setUserId] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
+  // Initialize Firebase and set up auth listener
   useEffect(() => {
-    // Initialize Firebase and set up auth listener
     const init = async () => {
       try {
-        const { app, auth, db } = await initializeFirebase();
-        console.log('Firebase initialized:', app.name);
-
+        const { auth } = await initializeFirebase();
         // Listen for auth state changes
-        const unsubscribe = auth.onAuthStateChanged(user => {
+        const unsubscribe = getAuthInstance().onAuthStateChanged(user => {
           if (user) {
             setUserId(user.uid);
-            console.log("User signed in:", user.uid);
+            console.log("Firebase Auth State Changed: User ID", user.uid);
           } else {
             setUserId(null);
-            console.log("No user signed in.");
+            console.log("Firebase Auth State Changed: No user logged in.");
           }
-          setFirebaseInitialized(true); // Mark Firebase as ready after initial auth check
+          setFirebaseInitialized(true);
+          setLoading(false); // Auth listener ready, stop loading
         });
-
-        return () => unsubscribe(); // Cleanup auth listener on unmount
-      } catch (error) {
-        console.error("Failed to initialize Firebase:", error);
-        // Handle error, e.g., show a message to the user
+        return () => unsubscribe(); // Clean up the listener
+      } catch (err) {
+        console.error("Failed to initialize Firebase:", err);
+        setError("Failed to connect to backend services. Please try again later.");
+        setLoading(false);
       }
     };
-
     init();
-  }, []); // Run only once on component mount
+  }, []);
 
-  if (!firebaseInitialized) {
+  // Video URL and ID for demonstration
+  // Replace with your actual video URL and a unique ID
+  const demoVideoUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'; // Rick Astley - Never Gonna Give Up
+  const demoVideoId = 'youtube-dQw4w9WgXcQ'; // Unique identifier for this video
+
+  if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-900 text-white">
-        <p className="text-xl">Loading application...</p>
+      <div className="flex items-center justify-center min-h-screen bg-gray-900 text-white text-2xl">
+        Loading application...
       </div>
     );
   }
 
-  // Example video URL (replace with your actual lecture video URL)
-  const videoUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'; // Replace with a real lecture video URL for testing
-  const videoId = 'sampleVideo'; // A unique ID for this specific video
+  if (error) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-red-900 text-white text-center p-4">
+        <p>Error: {error}</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center py-8 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-4xl w-full">
-        <h1 className="text-4xl font-bold text-center mb-8 text-indigo-400">
-          Lecture Video Progress Tracker
-        </h1>
-
+    <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center p-4 font-inter">
+      <h1 className="text-4xl md:text-5xl font-bold text-white mb-8 text-center drop-shadow-lg">
+        Video Progress Tracker
+      </h1>
+      <div className="w-full max-w-4xl">
         {userId ? (
-          <>
-            <p className="text-center text-sm mb-6 text-gray-400">
-              Current User ID: <span className="font-mono bg-gray-800 rounded px-2 py-1">{userId}</span>
-            </p>
-            <VideoPlayer videoUrl={videoUrl} videoId={videoId} userId={userId} />
-          </>
+          <VideoPlayer videoUrl={demoVideoUrl} videoId={demoVideoId} userId={userId} />
         ) : (
-          <div className="bg-gray-800 rounded-lg p-6 shadow-lg text-center">
-            <p className="text-xl text-red-400 font-semibold mb-4">Authentication Required</p>
-            <p className="text-gray-300">
-              Please ensure Firebase is correctly set up. If running in the Canvas environment, this should
-              happen automatically. If running locally, ensure your Firebase config is provided.
-            </p>
+          <div className="bg-gray-800 p-8 rounded-lg shadow-xl text-white text-center text-xl">
+            Please ensure you are authenticated to track video progress.
           </div>
         )}
       </div>
+
+      {userId && (
+        <div className="mt-8 p-4 bg-gray-800 rounded-lg shadow-md text-gray-400 text-sm break-words max-w-lg text-center">
+          <p>Your unique user ID (for demo purposes):</p>
+          <p className="font-mono text-indigo-400 text-base mt-1">{userId}</p>
+        </div>
+      )}
     </div>
   );
 }
